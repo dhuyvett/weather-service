@@ -1,0 +1,56 @@
+openapi: 3.0.1
+info:
+  title: Weather Service
+  version: "1.0"
+paths:
+  /forecast:
+    get:
+      tags:
+        - WeatherForecast
+      operationId: GetWeatherForecast
+      parameters:
+        - name: city
+          in: query
+          schema:
+            type: string
+          required: true
+          description: City name to lookup the forecast
+        - name: units
+          in: query
+          schema:
+            type: string
+            enum: [celsius, fahrenheit]
+            default: celsius
+          description: Temperature units to return
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WeatherForecast"
+components:
+  schemas:
+    WeatherForecast:
+      required:
+        - date
+        - lowTemperature
+        - highTemperature
+        - summary
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        lowTemperature:
+          type: number
+          format: float
+        highTemperature:
+          type: number
+          format: float
+        summary:
+          type: string
+          nullable: true
+      additionalProperties: false

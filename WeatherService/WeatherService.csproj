@@ -7,4 +7,26 @@
     <NoDefaultLaunchSettingsFile>True</NoDefaultLaunchSettingsFile>
   </PropertyGroup>
 
+  <Target Name="CodeGen" BeforeTargets="BeforeCompile" Inputs="wwwroot\weather-service.yaml"
+    Outputs="Generated\WeatherForecastController.cs">
+    <Exec WorkingDirectory="$(ProjectDir)" Command="$(NSwagExe_Net70) run nswag.json" />
+    <ItemGroup>
+      <Compile Include="Generated\WeatherForecastController.cs" KeepDuplicates="false" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="NSwag.AspNetCore" Version="13.18.2" />
+    <PackageReference Include="NSwag.MSBuild" Version="13.18.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="wwwroot\**\*.*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
