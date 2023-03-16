@@ -10,6 +10,11 @@ A sample microservice that illustrates techniques for building a production read
   - [.gitignore File](#gitignore-file)
   - [Solution File](#solution-file)
   - [Service Project](#service-project)
+- [Define the API](#define-the-api)
+  - [OpenAPI spec](#openapi-spec)
+  - [NSwag configuration](#nswag-configuration)
+  - [WeatherForecastController](#weatherforecastcontroller)
+  - [SwaggerUI](#swaggerui)
 
 ## Project Setup
 
@@ -152,3 +157,135 @@ Restore succeeded.
 ~/src/weather-service (project-setup)$ dotnet sln add WeatherService
 Project `WeatherService/WeatherService.csproj` added to the solution.
 ```
+
+## Define the API
+
+Most examples will create a controller and use [Swashbuckle](https://github.com/domaindrivendev/Swashbuckle.AspNetCore) to generate the [OpenAPI](https://www.openapis.org/) spec.
+There are a couple of issues with that approach.
+One issue is illustrated by the app that is created by `dotnet new webapi`.
+If you run that app, and look at the generated API spec, it doesn't match the data returned.
+Looking at the schema in the API spec, you see:
+
+```json
+"date": {
+      "year": 0,
+      "month": 0,
+      "day": 0,
+      "dayOfWeek": 0,
+      "dayOfYear": 0,
+      "dayNumber": 0
+    }
+```
+
+But looking at the data returned from the server, you see:
+
+```json
+ "date": "2023-03-19"
+```
+
+There is an annotation that can be used to fix this, but developing and maintaining the annotations becomes an exercise in reverse-engineering the spec that you want into the code.
+
+Also, it is trivial to make a inconsequential seeming change in the code that ends up changing the exposed API.
+Because the spec is what clients will use to understand how to call the service, it should be the source of truth, and the code should follow from the spec.
+
+### OpenAPI spec
+
+The `OpenAPI` spec for your service can be authored in your tool of choice, or [online](https://www.openapis.org/).
+A good place to start in understanding what goes into the spec is the [documentation](https://oai.github.io/Documentation/) at the `OpenAPI` initiative.
+The [spec](./WeatherService/wwwroot/weather-service.yaml) should be put in a directory named `wwwroot` in the project directory.
+The location of the spec file is important because it needs to be served as a static file at runtime to enable the [Swagger UI](https://swagger.io/tools/swagger-ui/).
+
+### NSwag configuration
+
+[NSwag](https://github.com/RicoSuter/NSwag) is a toolset that can be used to generate controllers and data types from an `OpenAPI` spec.
+It is similar to `Swashbuckle`, but in addition to being able to generate `OpenAPI` spec from C# controllers, `NSwag` can also generate C# controllers from an `OpenAPI` spec.
+It is configured using a [JSON file](./WeatherDervice/../WeatherService/nswag.json).
+The [documentation](https://github.com/RicoSuter/NSwag/wiki/NSwag-Configuration-Document) for how to configure `NSwag` for controller generation is not great.
+Feel free to start with the [example](./WeatherService/nswag.json) and customize by the elements to suit your needs.
+
+The [project](./WeatherService/WeatherService.csproj) file needs to be updated to include `NSwag` and generate controller code during the build:
+
+```xml
+  <!-- run the code generator (if needed) before compile -->
+  <Target Name="CodeGen" BeforeTargets="BeforeCompile" Inputs="wwwroot\weather-service.yaml"
+    Outputs="Generated\WeatherForecastController.cs">
+    <Exec WorkingDirectory="$(ProjectDir)" Command="$(NSwagExe_Net70) run nswag.json" />
+
+    <!-- this is needed for the build to recognize the newly created file as it continues with compile -->
+    <ItemGroup>
+      <Compile Include="Generated\WeatherForecastController.cs" KeepDuplicates="false" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="NSwag.AspNetCore" Version="13.18.2" />
+    <PackageReference Include="NSwag.MSBuild" Version="13.18.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+```
+
+It is a good idea to add `Generated` to a [.gitignore](./WeatherService/.gitignore) file in the project directory to prevent the generated code from being checked into source control.
+
+### WeatherForecastController
+
+With the `nswag.json` file and updated project file, `dotnet build` will result in creation of `Generated\WeatherForecastController.cs`.
+I've added a simple [derived controller](./WeatherService/Controllers/WeatherForecastControllerImpl.cs) which overrides the service method in the generated controller and provides a simple static implementation.
+If the API spec is changed in a way that changes the controller method signature, it will result in a compile error in the derived controller which will make it clear what needs to be changed in code to adapt to the API change.
+
+To use the controller, [Program.cs](./WeatherService/Program.cs) must be updated.
+Remove the default "hello world" mapping that was added when the project was created, and add the following:
+
+```c#
+// Add services to the container.
+builder.Services.AddControllers();
+...
+app.MapControllers();
+```
+
+Then run the service and you can test it with curl:
+
+```sh
+curl -X GET "http://localhost:5000/forecast?city=Poway&units=celsius" -H "accept: application/json"
+[{"date":"2023-03-15","lowTemperature":0,"highTemperature":100,"summary":"placeholder"}]
+```
+
+### SwaggerUI
+
+To use `SwaggerUI` with the service, the service must serve the `OpenAPI` spec as a static file.
+This is why [weather-service.yaml](./WeatherService/wwwroot/weather-service.yaml) is in `wwwroot`.
+To make sure that the file is included in the build update the [project](./WeatherService/WeatherService.csproj) file, adding:
+
+```xml
+  <ItemGroup>
+    <Content Update="wwwroot\**\*.*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+```
+
+.NET does not serve `YAML` files by default.
+Update [Program.cs](./WeatherService/Program.cs), adding the following to enable serving `YAML` files
+
+```c#
+var provider = new FileExtensionContentTypeProvider();
+provider.Mappings[".yml"] = "application/x-yaml";
+provider.Mappings[".yaml"] = "application/x-yaml";
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = provider
+});
+```
+
+Finally, Update `Program.cs` to use SwaggerUI
+
+```c#
+app.UseSwaggerUi3(cfg =>
+{
+    cfg.SwaggerRoutes.Add(new NSwag.AspNetCore.SwaggerUi3Route("weather-service", "/weather-service.yaml"));
+});
+```
+
+Run the service again, and open a browser to: `http://localhost:5000/swagger` to load SwaggerUI.
